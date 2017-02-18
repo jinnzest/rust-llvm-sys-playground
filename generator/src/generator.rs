@@ -7,32 +7,9 @@ use llvm::*;
 
 pub fn llvm_exec() -> bool {
     load_bignum_symbols();
-
     let mut runner = LLVMRunner::new();
-    let main = runner.mk_main_func(|ref mut r| {
-        r.call_printf_func("Hello from JIT generated executable!\n", "");
-        let i8_pt = r.llvm.ptr_t(r.llvm.i8_t());
-        let i32_t = r.llvm.i32_t();
-        let num_ref1 = r.llvm.build_alloca("num1", r.structs.mp_struct);
-        let num_ref2 = r.llvm.build_alloca("num2", r.structs.mp_struct);
-        let res_str_ptr = r.llvm.build_alloca("res_str", i8_pt);
-        let res_num_ref = r.llvm.build_alloca("res_num", r.structs.mp_struct);
-        let str_size_ref = r.llvm.build_alloca("str_size", i32_t);
-        let num_str_ref1 = r.llvm.mk_global_string("num1", "100");
-        let num_str_ref2 = r.llvm.mk_global_string("num2", "10");
-        r.call_mp_init(num_ref1);
-        r.call_mp_init(num_ref2);
-        r.call_mp_init(res_num_ref);
-        r.call_mp_read_radix(num_ref1, num_str_ref1);
-        r.call_mp_read_radix(num_ref2, num_str_ref2);
-        r.call_mp_add(num_ref1, num_ref2, res_num_ref);
-        r.call_radix_size(res_num_ref, str_size_ref);
-        let str_ref = r.call_malloc(str_size_ref);
-        r.call_mp_toradix(str_ref, res_num_ref, res_str_ptr);
-        let loaded = r.llvm.build_load(res_str_ptr);
-        r.call_printf_func_by_value("Number: %s\n", loaded);
-        r.call_printf_func("Goodbye from JIT generated executable\n", "");
-    });
+    let main = mk_main(&mut runner);
+    runner.llvm.dump("output");
     runner.llvm.exec_func(main)
 }
 
@@ -55,10 +32,9 @@ pub fn llvm_compile(out_name: &str) -> bool {
     }
 }
 
-pub fn llvm_compile2(out_name: &str) -> bool {
-    let mut runner = LLVMRunner::new();
+fn mk_main(runner: &mut LLVMRunner) -> LLVMValueRef {
     runner.mk_main_func(|ref mut r| {
-        r.call_printf_func("Hello from compiled to a file executable!\n", "");
+        r.call_printf_func_one("Hello from JIT generated executable!\n");
         let i8_pt = r.llvm.ptr_t(r.llvm.i8_t());
         let i32_t = r.llvm.i32_t();
         let num_ref1 = r.llvm.build_alloca("num1", r.structs.mp_struct);
@@ -66,22 +42,28 @@ pub fn llvm_compile2(out_name: &str) -> bool {
         let res_str_ptr = r.llvm.build_alloca("res_str", i8_pt);
         let res_num_ref = r.llvm.build_alloca("res_num", r.structs.mp_struct);
         let str_size_ref = r.llvm.build_alloca("str_size", i32_t);
-
-        let num_str_ref1 = r.llvm.mk_global_string("num1", "100");
-        let num_str_ref2 = r.llvm.mk_global_string("num2", "10");
+        let array_i8t = r.llvm.arr_t(r.llvm.i8_t(), 100);
+        let input_str_ref = r.llvm.build_alloca("num1_input", array_i8t);
         r.call_mp_init(num_ref1);
         r.call_mp_init(num_ref2);
         r.call_mp_init(res_num_ref);
-        r.call_mp_read_radix(num_ref1, num_str_ref1);
-        r.call_mp_read_radix(num_ref2, num_str_ref2);
+        r.call_scanf_func("%s", input_str_ref);
+        r.call_mp_read_radix(num_ref1, input_str_ref);
+        r.call_scanf_func("%s", input_str_ref);
+        r.call_mp_read_radix(num_ref2, input_str_ref);
         r.call_mp_add(num_ref1, num_ref2, res_num_ref);
         r.call_radix_size(res_num_ref, str_size_ref);
         let str_ref = r.call_malloc(str_size_ref);
         r.call_mp_toradix(str_ref, res_num_ref, res_str_ptr);
         let loaded = r.llvm.build_load(res_str_ptr);
-        r.call_printf_func_by_value("Number: %s\n", loaded);
-        r.call_printf_func("Googdbye from compiled to a file executable!\n", "");
-    });
+        r.call_printf_func_by_value("Result of adding two inputted numbers: %s\n", loaded);
+        r.call_printf_func_one("Goodbye from JIT generated executable\n");
+    })
+}
+
+pub fn llvm_compile2(out_name: &str) -> bool {
+    let mut runner = LLVMRunner::new();
+    mk_main(&mut runner);
     runner.llvm.dump(out_name);
     if runner.llvm.mk_object_file(out_name) {
         link()
@@ -148,10 +130,11 @@ impl LLVMRunner {
 
     fn call_mp_read_radix(&mut self, num: LLVMValueRef, str_num: LLVMValueRef) {
         let const_10 = gen_const(&mut self.llvm, 10);
+        let num_ptr = self.llvm.get_struct_field_ptr(str_num, 0);
         self.llvm.call_func(
             "mp_read_radix",
             self.funcs.mp_read_radix,
-            &mut vec![num, str_num, const_10],
+            &mut vec![num, num_ptr, const_10],
         );
     }
 
@@ -207,17 +190,37 @@ impl LLVMRunner {
 
     fn call_printf_func_by_value(&mut self, fmt: &str, value: LLVMValueRef) {
         let format_str = self.llvm.mk_global_string("format", fmt);
-        let mut printf_args = vec![format_str, value];
+        let format_str_loaded = self.llvm.get_struct_field_ptr(format_str, 0);
+        let mut printf_args = vec![format_str_loaded, value];
         self.llvm
             .call_func("printf", self.funcs.printf, &mut printf_args);
     }
 
     fn call_printf_func(&mut self, fmt: &str, value: &str) {
         let format_str = self.llvm.mk_global_string("format", fmt);
-        let world_str = self.llvm.mk_global_string("world", value);
-        let mut printf_args = vec![format_str, world_str];
+        let value_str = self.llvm.mk_global_string("value", value);
+        let format_str_loaded = self.llvm.get_struct_field_ptr(format_str, 0);
+        let value_ptr = self.llvm.build_load(value_str);
+        let mut printf_args = vec![format_str_loaded, value_ptr];
         self.llvm
             .call_func("printf", self.funcs.printf, &mut printf_args);
+    }
+
+    fn call_printf_func_one(&mut self, value: &str) {
+        let value_str = self.llvm.mk_global_string("value", value);
+        let format_str_loaded = self.llvm.get_struct_field_ptr(value_str, 0);
+        let mut printf_args = vec![format_str_loaded];
+        self.llvm
+            .call_func("printf", self.funcs.printf, &mut printf_args);
+    }
+
+    fn call_scanf_func(&mut self, fmt: &str, value: LLVMValueRef) {
+        let format_str = self.llvm.mk_global_string("format", fmt);
+        let format_str_loaded = self.llvm.get_struct_field_ptr(format_str, 0);
+        let loaded_value_buf = self.llvm.get_struct_field_ptr(value, 0);
+        let mut printf_args = vec![format_str_loaded, loaded_value_buf];
+        self.llvm
+            .call_func("scanf", self.funcs.scanf, &mut printf_args);
     }
 
     fn call_free(&mut self, addr: LLVMValueRef) {

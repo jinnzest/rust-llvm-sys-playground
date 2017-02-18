@@ -13,6 +13,7 @@ use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
 use std::mem;
+use std::path::Path;
 use std::process::Command;
 use std::ptr;
 use std::ptr::null_mut;
@@ -39,6 +40,7 @@ pub struct LLVM {
 
 pub struct LLVMFuncs {
     pub printf: LLVMValueRef,
+    pub scanf: LLVMValueRef,
     pub free: LLVMValueRef,
     pub malloc: LLVMValueRef,
     pub mp_init: LLVMValueRef,
@@ -163,34 +165,23 @@ impl LLVM {
     }
 
     pub fn dump(&self, name: &str) {
-        unsafe {
-            let file_name = format!("./target/{}.ll", name);
-            println!("Dumping LLVM IR to the file: {}", file_name);
+        let file_name = format!("./target/{}.ll", name);
+        println!("Dumping LLVM IR to the file: {}", file_name);
+        if Path::new(&file_name).exists() {
             match fs::remove_file(&file_name) {
                 Err(e) => println!(
                     "The file '{}' can't be removed because of the error: {}",
                     file_name, e
                 ),
                 Ok(_) => {
-                    let llvm_ir_ptr = LLVMPrintModuleToString(self.module);
-                    let llvm_ir = CStr::from_ptr(llvm_ir_ptr as *const _);
-                    match File::create(&file_name) {
-                        Ok(mut f) => match f.write_all(llvm_ir.to_bytes()) {
-                            Ok(_) => {}
-                            Err(e) => println!(
-                                "The file '{}' can't be written because of the error: {}",
-                                file_name, e
-                            ),
-                        },
-                        Err(e) => println!(
-                            "The file '{}' can't be created because of the error: {}",
-                            file_name, e
-                        ),
-                    }
+                    writing_dump(&file_name, self.module);
                 }
             }
+        } else {
+            writing_dump(&file_name, self.module);
         }
     }
+
     pub fn get_struct_field_ptr(&mut self, struct_ref: LLVMValueRef, index: u32) -> LLVMValueRef {
         unsafe {
             LLVMBuildStructGEP(
@@ -434,6 +425,7 @@ impl LLVMFuncs {
     pub fn new(llvm: &mut LLVM, llvm_structs: &LLVMStructs) -> Self {
         LLVMFuncs {
             printf: export_printf_func(llvm),
+            scanf: export_scanf_func(llvm),
             free: export_free_func(llvm),
             malloc: export_malloc_func(llvm),
             mp_init: export_mp_init_func(llvm, llvm_structs),
@@ -506,6 +498,13 @@ fn export_printf_func(llvm: &mut LLVM) -> LLVMValueRef {
     llvm.mk_func("printf", printf_type)
 }
 
+fn export_scanf_func(llvm: &mut LLVM) -> LLVMValueRef {
+    let mut argts = [llvm.ptr_t(llvm.i8_t())];
+    let ret = llvm.i32_t();
+    let printf_type = llvm.mk_func_type_varargs(ret, &mut argts);
+    llvm.mk_func("scanf", printf_type)
+}
+
 fn export_free_func(llvm: &mut LLVM) -> LLVMValueRef {
     let mut argts = [llvm.ptr_t(llvm.i8_t())];
     let ret = llvm.void_t();
@@ -561,5 +560,25 @@ pub fn link() -> bool {
         true
     } else {
         false
+    }
+}
+
+fn writing_dump(file_name: &str, module: LLVMModuleRef) {
+    unsafe {
+        let llvm_ir_ptr = LLVMPrintModuleToString(module);
+        let llvm_ir = CStr::from_ptr(llvm_ir_ptr as *const _);
+        match File::create(&file_name) {
+            Ok(mut f) => match f.write_all(llvm_ir.to_bytes()) {
+                Ok(_) => {}
+                Err(e) => println!(
+                    "The file '{}' can't be written because of the error: {}",
+                    file_name, e
+                ),
+            },
+            Err(e) => println!(
+                "The file '{}' can't be created because of the error: {}",
+                file_name, e
+            ),
+        }
     }
 }
