@@ -1,0 +1,10 @@
+[package]
+name = "llvm-sys-playground"
+version = "0.1.0"
+authors = ["jinnzest <jinnzest@users.noreply.github.com>"]
+
+[dependencies]
+llvm-sys = "70.1.0"
+lalrpop-util = "0.16.0"
+libc = "0.2"
+rust-crypto = "0.2.36"

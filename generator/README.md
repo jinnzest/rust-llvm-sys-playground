@@ -1,0 +1,1 @@
+To build it or run set "llvm_path" in build.properties
