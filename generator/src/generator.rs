@@ -2,9 +2,44 @@ extern crate libc;
 extern crate llvm_sys;
 
 use self::llvm_sys::prelude::*;
+use bignumloader::*;
 use llvm::*;
 
-pub fn llvm_compile() -> bool {
+pub fn llvm_exec() -> bool {
+    load_bignum_symbols();
+
+    let mut runner = LLVMRunner::new();
+    let main = runner.mk_main_func(|ref mut r| {
+        r.call_printf_func("Hello from JIT generated executable!\n", "");
+        let i8_pt = r.llvm.ptr_t(r.llvm.i8_t());
+        let i32_t = r.llvm.i32_t();
+        let struct_mp1 = r.llvm.struct_mp();
+        let struct_mp2 = r.llvm.struct_mp();
+        let struct_mp3 = r.llvm.struct_mp();
+        let num_ref1 = r.llvm.build_alloca("num1", struct_mp1);
+        let num_ref2 = r.llvm.build_alloca("num2", struct_mp2);
+        let res_str_ptr = r.llvm.build_alloca("res_str", i8_pt);
+        let res_num_ref = r.llvm.build_alloca("res_num", struct_mp3);
+        let str_size_ref = r.llvm.build_alloca("str_size", i32_t);
+        let num_str_ref1 = r.llvm.mk_global_string("num1", "100");
+        let num_str_ref2 = r.llvm.mk_global_string("num2", "10");
+        r.call_mp_init(num_ref1);
+        r.call_mp_init(num_ref2);
+        r.call_mp_init(res_num_ref);
+        r.call_mp_read_radix(num_ref1, num_str_ref1);
+        r.call_mp_read_radix(num_ref2, num_str_ref2);
+        r.call_mp_add(num_ref1, num_ref2, res_num_ref);
+        r.call_radix_size(res_num_ref, str_size_ref);
+        let str_ref = r.call_malloc(str_size_ref);
+        r.call_mp_toradix(str_ref, res_num_ref, res_str_ptr);
+        let loaded = r.llvm.build_load(res_str_ptr);
+        r.call_printf_func_by_value("Number: %s\n", loaded);
+        r.call_printf_func("Goodbye from JIT generated executable\n", "");
+    });
+    runner.llvm.exec_func(main)
+}
+
+pub fn llvm_compile(out_name: &str) -> bool {
     let mut runner = LLVMRunner::new();
     runner.mk_main_func(|ref mut r| {
         r.call_hello_world_function();
@@ -15,17 +50,18 @@ pub fn llvm_compile() -> bool {
         r.call_slice();
         r.call_hello_one("Bob");
     });
-    runner.llvm.dump("output");
-    if runner.llvm.mk_object_file("output") {
+    runner.llvm.dump(out_name);
+    if runner.llvm.mk_object_file(out_name) {
         link()
     } else {
         false
     }
 }
 
-pub fn llvm_compile2() -> bool {
+pub fn llvm_compile2(out_name: &str) -> bool {
     let mut runner = LLVMRunner::new();
     runner.mk_main_func(|ref mut r| {
+        r.call_printf_func("Hello from compiled to a file executable!\n", "");
         let i8_pt = r.llvm.ptr_t(r.llvm.i8_t());
         let i32_t = r.llvm.i32_t();
         let struct_mp1 = r.llvm.struct_mp();
@@ -50,9 +86,10 @@ pub fn llvm_compile2() -> bool {
         r.call_mp_toradix(str_ref, res_num_ref, res_str_ptr);
         let loaded = r.llvm.build_load(res_str_ptr);
         r.call_printf_func_by_value("Number: %s\n", loaded);
+        r.call_printf_func("Googdbye from compiled to a file executable!\n", "");
     });
-    runner.llvm.dump("output");
-    if runner.llvm.mk_object_file("output") {
+    runner.llvm.dump(out_name);
+    if runner.llvm.mk_object_file(out_name) {
         link()
     } else {
         false
@@ -72,7 +109,7 @@ impl LLVMRunner {
         LLVMRunner { llvm, funcs }
     }
 
-    fn mk_main_func(&mut self, f: fn(&mut LLVMRunner) -> ()) {
+    fn mk_main_func(&mut self, f: fn(&mut LLVMRunner) -> ()) -> LLVMValueRef {
         let ret = self.llvm.void_t();
         let main_func_type = self.llvm.mk_func_type(ret, &mut vec![]);
         let main_func = self.llvm.mk_func("main", main_func_type);
@@ -81,6 +118,7 @@ impl LLVMRunner {
         f(self);
 
         self.llvm.ret_void();
+        main_func
     }
 
     fn call_create_str(&mut self) {
@@ -150,12 +188,7 @@ impl LLVMRunner {
         )
     }
 
-    fn call_mp_add(
-        &mut self,
-        num1: LLVMValueRef,
-        num2: LLVMValueRef,
-        res_num_ref: LLVMValueRef,
-    ) {
+    fn call_mp_add(&mut self, num1: LLVMValueRef, num2: LLVMValueRef, res_num_ref: LLVMValueRef) {
         self.llvm.call_func(
             "mp_add",
             self.funcs.mp_add,

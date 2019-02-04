@@ -2,6 +2,7 @@
 name = "llvm-sys-playground"
 version = "0.1.0"
 authors = ["jinnzest <jinnzest@users.noreply.github.com>"]
+build = "build.rs"
 
 [dependencies]
 llvm-sys = "70.1.0"

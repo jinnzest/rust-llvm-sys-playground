@@ -1,6 +1,7 @@
 extern crate llvm_sys;
 
 use self::llvm_sys::core::*;
+use self::llvm_sys::execution_engine::*;
 use self::llvm_sys::prelude::*;
 use self::llvm_sys::target::*;
 use self::llvm_sys::target_machine::*;
@@ -9,9 +10,10 @@ use std::ffi::CString;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
-use std::os::raw::{c_uint, c_ulonglong};
+use std::mem;
 use std::process::Command;
 use std::ptr;
+use std::ptr::null_mut;
 
 macro_rules! empty_mut_c_str {
     ($s:expr) => {
@@ -28,9 +30,9 @@ pub struct CStrOwner {
 
 pub struct LLVM {
     pub context: LLVMContextRef,
-    module: LLVMModuleRef,
+    pub module: LLVMModuleRef,
     builder: LLVMBuilderRef,
-    cstr_owner: CStrOwner,
+    pub cstr_owner: CStrOwner,
 }
 
 pub struct LLVMFuncs {
@@ -49,7 +51,7 @@ impl CStrOwner {
         CStrOwner { strings: vec![] }
     }
 
-    fn new_str_ptr(&mut self, s: &str) -> *mut i8 {
+    pub fn new_str_ptr(&mut self, s: &str) -> *mut i8 {
         let cstring = CString::new(s).unwrap();
         let ptr = cstring.as_ptr() as *mut _;
         self.strings.push(cstring);
@@ -142,11 +144,31 @@ impl LLVM {
 
     pub fn dump(&self, name: &str) {
         unsafe {
-            fs::remove_file(format!("./target/{}.ll", name));
-            let llvm_ir_ptr = LLVMPrintModuleToString(self.module);
-            let llvm_ir = CStr::from_ptr(llvm_ir_ptr as *const _);
-            let file = File::create(format!("./target/{}.ll", name));
-            file.unwrap().write_all(llvm_ir.to_bytes());
+            let file_name = format!("./target/{}.ll", name);
+            println!("Dumping LLVM IR to the file: {}", file_name);
+            match fs::remove_file(&file_name) {
+                Err(e) => println!(
+                    "The file '{}' can't be removed because of the error: {}",
+                    file_name, e
+                ),
+                Ok(_) => {
+                    let llvm_ir_ptr = LLVMPrintModuleToString(self.module);
+                    let llvm_ir = CStr::from_ptr(llvm_ir_ptr as *const _);
+                    match File::create(&file_name) {
+                        Ok(mut f) => match f.write_all(llvm_ir.to_bytes()) {
+                            Ok(_) => {}
+                            Err(e) => println!(
+                                "The file '{}' can't be written because of the error: {}",
+                                file_name, e
+                            ),
+                        },
+                        Err(e) => println!(
+                            "The file '{}' can't be created because of the error: {}",
+                            file_name, e
+                        ),
+                    }
+                }
+            }
         }
     }
     pub fn get_struct_field_ptr(&mut self, struct_ref: LLVMValueRef, index: u32) -> LLVMValueRef {
@@ -266,7 +288,7 @@ impl LLVM {
     }
     pub fn mk_object_file(&mut self, name: &str) -> bool {
         unsafe {
-            println!("initializing components to generate object file\n");
+            println!("initializing LLVM to generate object file\n");
             LLVM_InitializeAllTargetInfos();
             LLVM_InitializeAllTargets();
             LLVM_InitializeAllTargetMCs();
@@ -335,6 +357,30 @@ impl LLVM {
             }
         }
     }
+    pub fn exec_func(&mut self, func: LLVMValueRef) -> bool {
+        unsafe {
+            let mut ee = mem::uninitialized();
+            LLVMLinkInMCJIT();
+            LLVM_InitializeNativeTarget();
+            LLVM_InitializeNativeAsmPrinter();
+
+            let mut getting_target_error = empty_mut_c_str!("");
+            LLVMCreateExecutionEngineForModule(&mut ee, self.module, &mut getting_target_error);
+
+            let emitting_obj_err_str = from_c(getting_target_error);
+
+            if !emitting_obj_err_str.is_empty() {
+                println!("ERROR generating file: {}", emitting_obj_err_str);
+                false
+            } else {
+                println!("running main");
+                self.dump("output");
+                LLVMRunFunction(ee, func, 0, null_mut());
+                // LLVMRunFunctionAsMain(ee, main, 0, null_mut(), null_mut());
+                true
+            }
+        }
+    }
 }
 
 impl LLVMFuncs {
@@ -361,16 +407,16 @@ pub fn export_mp_add(llvm: &mut LLVM) -> LLVMValueRef {
 }
 
 pub fn export_mp_to_radix(llvm: &mut LLVM) -> LLVMValueRef {
-    let mut mp_radix_size_args = [llvm.ptr_t(llvm.i32_t())];
+    let mut args = [llvm.ptr_t(llvm.i32_t())];
     let ret = llvm.i32_t();
-    let mp_toradix_type = llvm.mk_func_type(ret, &mut mp_radix_size_args);
+    let mp_toradix_type = llvm.mk_func_type(ret, &mut args);
     llvm.mk_func("mp_toradix", mp_toradix_type)
 }
 
 pub fn export_mp_radix_size(llvm: &mut LLVM) -> LLVMValueRef {
-    let mut mp_radix_size_args = [llvm.ptr_t(llvm.i32_t())];
+    let mut args = [llvm.ptr_t(llvm.struct_mp()), llvm.ptr_t(llvm.i32_t())];
     let ret = llvm.i32_t();
-    let mp_read_radix = llvm.mk_func_type(ret, &mut mp_radix_size_args);
+    let mp_read_radix = llvm.mk_func_type(ret, &mut args);
     llvm.mk_func("mp_radix_size", mp_read_radix)
 }
 
