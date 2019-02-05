@@ -5,6 +5,8 @@ use self::llvm_sys::execution_engine::*;
 use self::llvm_sys::prelude::*;
 use self::llvm_sys::target::*;
 use self::llvm_sys::target_machine::*;
+use llvm::llvm_sys::analysis::LLVMVerifierFailureAction;
+use llvm::llvm_sys::analysis::LLVMVerifyModule;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::fs;
@@ -83,6 +85,10 @@ impl LLVM {
 
     pub fn i8_t(&self) -> LLVMTypeRef {
         unsafe { LLVMInt8TypeInContext(self.context) }
+    }
+
+    pub fn arr_t(&self, t: LLVMTypeRef, cnt: ::libc::c_uint) -> LLVMTypeRef {
+        unsafe { LLVMArrayType(t, cnt) }
     }
 
     pub fn ptr_t(&self, t: LLVMTypeRef) -> LLVMTypeRef {
@@ -251,6 +257,19 @@ impl LLVM {
             LLVMFunctionType(return_type, param_types, args_type.len() as u32, LLVM_FALSE)
         }
     }
+    pub fn mk_func_type_varargs(
+        &mut self,
+        return_type: LLVMTypeRef,
+        args_type: &mut [LLVMTypeRef],
+    ) -> LLVMTypeRef {
+        unsafe {
+            let param_types = match args_type.len() {
+                0 => ptr::null_mut(),
+                _ => args_type.as_mut_ptr(),
+            };
+            LLVMFunctionType(return_type, param_types, args_type.len() as u32, LLVM_TRUE)
+        }
+    }
     pub fn call_func(
         &mut self,
         name: &str,
@@ -294,6 +313,13 @@ impl LLVM {
             LLVM_InitializeAllTargetMCs();
             LLVM_InitializeAllAsmParsers();
             LLVM_InitializeAllAsmPrinters();
+
+            let mut module_verification_error = empty_mut_c_str!("");
+            LLVMVerifyModule(
+                self.module,
+                LLVMVerifierFailureAction::LLVMPrintMessageAction,
+                &mut module_verification_error,
+            );
 
             let triple = LLVMGetDefaultTargetTriple();
             println!("Triple: {:?}", from_c(triple));
@@ -364,6 +390,15 @@ impl LLVM {
             LLVM_InitializeNativeTarget();
             LLVM_InitializeNativeAsmPrinter();
 
+            let mut module_verification_error = empty_mut_c_str!("");
+            LLVMVerifyModule(
+                self.module,
+                LLVMVerifierFailureAction::LLVMReturnStatusAction,
+                &mut module_verification_error,
+            );
+
+            
+
             let mut getting_target_error = empty_mut_c_str!("");
             LLVMCreateExecutionEngineForModule(&mut ee, self.module, &mut getting_target_error);
 
@@ -407,14 +442,22 @@ pub fn export_mp_add(llvm: &mut LLVM) -> LLVMValueRef {
 }
 
 pub fn export_mp_to_radix(llvm: &mut LLVM) -> LLVMValueRef {
-    let mut args = [llvm.ptr_t(llvm.i32_t())];
+    let mut args = [
+        llvm.ptr_t(llvm.struct_mp()),
+        llvm.ptr_t(llvm.i8_t()),
+        llvm.i32_t(),
+    ];
     let ret = llvm.i32_t();
     let mp_toradix_type = llvm.mk_func_type(ret, &mut args);
     llvm.mk_func("mp_toradix", mp_toradix_type)
 }
 
 pub fn export_mp_radix_size(llvm: &mut LLVM) -> LLVMValueRef {
-    let mut args = [llvm.ptr_t(llvm.struct_mp()), llvm.ptr_t(llvm.i32_t())];
+    let mut args = [
+        llvm.ptr_t(llvm.struct_mp()),
+        llvm.i32_t(),
+        llvm.ptr_t(llvm.i32_t()),
+    ];
     let ret = llvm.i32_t();
     let mp_read_radix = llvm.mk_func_type(ret, &mut args);
     llvm.mk_func("mp_radix_size", mp_read_radix)
@@ -422,7 +465,11 @@ pub fn export_mp_radix_size(llvm: &mut LLVM) -> LLVMValueRef {
 
 pub fn export_mp_read_radix(llvm: &mut LLVM) -> LLVMValueRef {
     let func_name2 = "mp_read_radix";
-    let mut args = [llvm.ptr_t(llvm.i32_t())];
+    let mut args = [
+        llvm.ptr_t(llvm.struct_mp()),
+        llvm.ptr_t(llvm.i8_t()),
+        llvm.i32_t(),
+    ];
     let ret = llvm.i32_t();
     let mp_read_radix = llvm.mk_func_type(ret, &mut args);
     llvm.mk_func(func_name2, mp_read_radix)
@@ -443,7 +490,7 @@ pub fn gen_const(llvm: &mut LLVM, v: u64) -> LLVMValueRef {
 fn export_printf_func(llvm: &mut LLVM) -> LLVMValueRef {
     let mut argts = [llvm.ptr_t(llvm.i8_t())];
     let ret = llvm.i32_t();
-    let printf_type = llvm.mk_func_type(ret, &mut argts);
+    let printf_type = llvm.mk_func_type_varargs(ret, &mut argts);
     llvm.mk_func("printf", printf_type)
 }
 
