@@ -13,13 +13,10 @@ pub fn llvm_exec() -> bool {
         r.call_printf_func("Hello from JIT generated executable!\n", "");
         let i8_pt = r.llvm.ptr_t(r.llvm.i8_t());
         let i32_t = r.llvm.i32_t();
-        let struct_mp1 = r.llvm.struct_mp();
-        let struct_mp2 = r.llvm.struct_mp();
-        let struct_mp3 = r.llvm.struct_mp();
-        let num_ref1 = r.llvm.build_alloca("num1", struct_mp1);
-        let num_ref2 = r.llvm.build_alloca("num2", struct_mp2);
+        let num_ref1 = r.llvm.build_alloca("num1", r.structs.mp_struct);
+        let num_ref2 = r.llvm.build_alloca("num2", r.structs.mp_struct);
         let res_str_ptr = r.llvm.build_alloca("res_str", i8_pt);
-        let res_num_ref = r.llvm.build_alloca("res_num", struct_mp3);
+        let res_num_ref = r.llvm.build_alloca("res_num", r.structs.mp_struct);
         let str_size_ref = r.llvm.build_alloca("str_size", i32_t);
         let num_str_ref1 = r.llvm.mk_global_string("num1", "100");
         let num_str_ref2 = r.llvm.mk_global_string("num2", "10");
@@ -64,13 +61,10 @@ pub fn llvm_compile2(out_name: &str) -> bool {
         r.call_printf_func("Hello from compiled to a file executable!\n", "");
         let i8_pt = r.llvm.ptr_t(r.llvm.i8_t());
         let i32_t = r.llvm.i32_t();
-        let struct_mp1 = r.llvm.struct_mp();
-        let struct_mp2 = r.llvm.struct_mp();
-        let struct_mp3 = r.llvm.struct_mp();
-        let num_ref1 = r.llvm.build_alloca("num1", struct_mp1);
-        let num_ref2 = r.llvm.build_alloca("num2", struct_mp2);
+        let num_ref1 = r.llvm.build_alloca("num1", r.structs.mp_struct);
+        let num_ref2 = r.llvm.build_alloca("num2", r.structs.mp_struct);
         let res_str_ptr = r.llvm.build_alloca("res_str", i8_pt);
-        let res_num_ref = r.llvm.build_alloca("res_num", struct_mp3);
+        let res_num_ref = r.llvm.build_alloca("res_num", r.structs.mp_struct);
         let str_size_ref = r.llvm.build_alloca("str_size", i32_t);
 
         let num_str_ref1 = r.llvm.mk_global_string("num1", "100");
@@ -99,14 +93,20 @@ pub fn llvm_compile2(out_name: &str) -> bool {
 struct LLVMRunner {
     llvm: LLVM,
     funcs: LLVMFuncs,
+    structs: LLVMStructs,
 }
 
 impl LLVMRunner {
     fn new() -> Self {
         let mut llvm = LLVM::new();
-        let funcs = LLVMFuncs::new(&mut llvm);
+        let structs = LLVMStructs::new(&mut llvm);
+        let funcs = LLVMFuncs::new(&mut llvm, &structs);
 
-        LLVMRunner { llvm, funcs }
+        LLVMRunner {
+            llvm,
+            funcs,
+            structs,
+        }
     }
 
     fn mk_main_func(&mut self, f: fn(&mut LLVMRunner) -> ()) -> LLVMValueRef {

@@ -48,6 +48,37 @@ pub struct LLVMFuncs {
     pub mp_add: LLVMValueRef,
 }
 
+pub struct LLVMStructs {
+    pub mp_struct: LLVMTypeRef,
+}
+
+impl LLVMStructs {
+    pub fn new(llvm: &mut LLVM) -> Self {
+        LLVMStructs {
+            mp_struct: export_mp_struct(llvm),
+        }
+    }
+}
+
+fn export_mp_struct(llvm: &mut LLVM) -> LLVMTypeRef {
+    unsafe {
+        let ns = LLVMStructCreateNamed(llvm.context, llvm.cstr_owner.new_str_ptr("mp_struct"));
+        LLVMStructSetBody(
+            ns,
+            [
+                llvm.i32_t(),
+                llvm.i32_t(),
+                llvm.i32_t(),
+                llvm.ptr_t(llvm.i64_t()),
+            ]
+            .as_mut_ptr(),
+            4,
+            LLVM_FALSE,
+        );
+        ns
+    }
+}
+
 impl CStrOwner {
     fn new() -> Self {
         CStrOwner { strings: vec![] }
@@ -101,23 +132,6 @@ impl LLVM {
 
     pub fn i64_t(&self) -> LLVMTypeRef {
         unsafe { LLVMInt64TypeInContext(self.context) }
-    }
-
-    pub fn struct_mp(&self) -> LLVMTypeRef {
-        unsafe {
-            LLVMStructTypeInContext(
-                self.context,
-                [
-                    self.i32_t(),
-                    self.i32_t(),
-                    self.i32_t(),
-                    self.ptr_t(self.i64_t()),
-                ]
-                .as_mut_ptr(),
-                4,
-                LLVM_FALSE,
-            )
-        }
     }
 
     pub fn struct_test(&self) -> LLVMTypeRef {
@@ -397,8 +411,6 @@ impl LLVM {
                 &mut module_verification_error,
             );
 
-            
-
             let mut getting_target_error = empty_mut_c_str!("");
             LLVMCreateExecutionEngineForModule(&mut ee, self.module, &mut getting_target_error);
 
@@ -419,31 +431,31 @@ impl LLVM {
 }
 
 impl LLVMFuncs {
-    pub fn new(llvm: &mut LLVM) -> Self {
+    pub fn new(llvm: &mut LLVM, llvm_structs: &LLVMStructs) -> Self {
         LLVMFuncs {
             printf: export_printf_func(llvm),
             free: export_free_func(llvm),
             malloc: export_malloc_func(llvm),
-            mp_init: export_mp_init_func(llvm),
-            mp_read_radix: export_mp_read_radix(llvm),
-            mp_radix_size: export_mp_radix_size(llvm),
-            mp_toradix: export_mp_to_radix(llvm),
-            mp_add: export_mp_add(llvm),
+            mp_init: export_mp_init_func(llvm, llvm_structs),
+            mp_read_radix: export_mp_read_radix(llvm, llvm_structs),
+            mp_radix_size: export_mp_radix_size(llvm, llvm_structs),
+            mp_toradix: export_mp_to_radix(llvm, llvm_structs),
+            mp_add: export_mp_add(llvm, llvm_structs),
         }
     }
 }
 
-pub fn export_mp_add(llvm: &mut LLVM) -> LLVMValueRef {
-    let mp_s_p = llvm.ptr_t(llvm.struct_mp());
+pub fn export_mp_add(llvm: &mut LLVM, llvm_structs: &LLVMStructs) -> LLVMValueRef {
+    let mp_s_p = llvm.ptr_t(llvm_structs.mp_struct);
     let mut args = [mp_s_p, mp_s_p, mp_s_p];
     let ret = llvm.i32_t();
     let func_type = llvm.mk_func_type(ret, &mut args);
     llvm.mk_func("mp_add", func_type)
 }
 
-pub fn export_mp_to_radix(llvm: &mut LLVM) -> LLVMValueRef {
+pub fn export_mp_to_radix(llvm: &mut LLVM, llvm_structs: &LLVMStructs) -> LLVMValueRef {
     let mut args = [
-        llvm.ptr_t(llvm.struct_mp()),
+        llvm.ptr_t(llvm_structs.mp_struct),
         llvm.ptr_t(llvm.i8_t()),
         llvm.i32_t(),
     ];
@@ -452,9 +464,9 @@ pub fn export_mp_to_radix(llvm: &mut LLVM) -> LLVMValueRef {
     llvm.mk_func("mp_toradix", mp_toradix_type)
 }
 
-pub fn export_mp_radix_size(llvm: &mut LLVM) -> LLVMValueRef {
+pub fn export_mp_radix_size(llvm: &mut LLVM, llvm_structs: &LLVMStructs) -> LLVMValueRef {
     let mut args = [
-        llvm.ptr_t(llvm.struct_mp()),
+        llvm.ptr_t(llvm_structs.mp_struct),
         llvm.i32_t(),
         llvm.ptr_t(llvm.i32_t()),
     ];
@@ -463,10 +475,10 @@ pub fn export_mp_radix_size(llvm: &mut LLVM) -> LLVMValueRef {
     llvm.mk_func("mp_radix_size", mp_read_radix)
 }
 
-pub fn export_mp_read_radix(llvm: &mut LLVM) -> LLVMValueRef {
+pub fn export_mp_read_radix(llvm: &mut LLVM, llvm_structs: &LLVMStructs) -> LLVMValueRef {
     let func_name2 = "mp_read_radix";
     let mut args = [
-        llvm.ptr_t(llvm.struct_mp()),
+        llvm.ptr_t(llvm_structs.mp_struct),
         llvm.ptr_t(llvm.i8_t()),
         llvm.i32_t(),
     ];
@@ -475,10 +487,10 @@ pub fn export_mp_read_radix(llvm: &mut LLVM) -> LLVMValueRef {
     llvm.mk_func(func_name2, mp_read_radix)
 }
 
-pub fn export_mp_init_func(llvm: &mut LLVM) -> LLVMValueRef {
+pub fn export_mp_init_func(llvm: &mut LLVM, llvm_structs: &LLVMStructs) -> LLVMValueRef {
     let func_name = "mp_init";
     let ret = llvm.i32_t();
-    let mp_sp = llvm.ptr_t(llvm.struct_mp());
+    let mp_sp = llvm.ptr_t(llvm_structs.mp_struct);
     let create_bigint = llvm.mk_func_type(ret, &mut [mp_sp]);
     llvm.mk_func(func_name, create_bigint)
 }
